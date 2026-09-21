@@ -1,0 +1,39 @@
+
+# dependencies
+/node_modules
+
+# testing
+/coverage
+
+# production
+build
+.next
+dist
+.swc
+
+# misc
+.DS_Store
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Editor directories and files
+.idea
+.vscode
+.cache
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+.history
+
+# automatically generated files
+next.runtime-config.js
+.i18n/.analyze
+i18n-cli.log
+dove.config.js
