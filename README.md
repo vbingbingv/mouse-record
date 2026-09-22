@@ -2204,3 +2204,62 @@ engine.start_replay(
 ```
 
 在这个基础上，再逐步增加更高级的自动化能力。
+
+---
+
+# 49. TODO：macOS 全局热键支持（待实现）
+
+分支：`feat/macos`
+
+Windows 上已经完成全局热键（Ctrl+8 开始/结束录制、Ctrl+9 开始/结束回放）与录制/回放期间自动隐藏窗口。其中热键只在 Windows 的事件源里接了按键映射，macOS 用的是另一个事件源，因此目前**在 macOS 上按热键没有任何反应**。本节记录要在 macOS 上补齐的内容。
+
+## 49.1 已经就绪（平台无关，不需要改）
+
+* `src-tauri/src/ui.rs` 的 `publish_state`：录制/回放时 `hide()`、回到 Idle 时 `show()`，用的是 Tauri 跳平台 API，macOS 一样生效。
+* `src-tauri/src/hotkey.rs` 的 `HotkeyDispatcher`：常驻线程 + `mpsc`，与平台无关；macOS 上也会被创建，只是永远收不到事件。
+* `commands/` 下抽出的 `_impl`（含新增的 `set_replay_options`）、`AppState.last_replay_options`、前端文案与 `hotkey-error` 监听。
+
+## 49.2 待实现（都在 `src-tauri/src/input/cgtap.rs`）
+
+当前 macOS 事件源只订阅鼠标事件（`event_mask()` 里连一个键盘事件类型都没有），`classify_event` 也没有按键分支。需要：
+
+1. `event_mask()` 里加上 `KEY_DOWN = 10`、`KEY_UP = 11`（CoreGraphics `CGEventType`）。
+2. `classify_event` 增加按键分支，复用 `input/source.rs` 已经写好的 `Hotkey` 与 `HotkeyFilter`（Ctrl 状态 + 按下沿去抖）：
+   * 数字键：`kVK_ANSI_8 = 0x1C` → `ToggleRecording`，`kVK_ANSI_9 = 0x19` → `ToggleReplay`。
+   * Ctrl：左 `kVK_Control = 0x3B`、右 `kVK_RightControl = 0x3E`，只更新 Ctrl 状态，不产生业务事件。
+   * 键码从 CGEvent 上读取：鼠标事件读的是 `EventField::MOUSE_EVENT_BUTTON_NUMBER`，键盘事件要换成 core_graphics 里与 `CGEventField` 对应的键盘键码字段（名字以当前 core_graphics 版本为准）。建议按事件类型分别读字段，避免对鼠标事件白读一次。
+3. 状态存放：`raw_callback` 是 `extern "C" fn`，捕获得不到环境，不能像 `rdev.rs` 那样把 `HotkeyFilter` 放在闭包局部变量里；照现有 `SINK` / `TAP_PORT` 的做法再加一个 `static HOTKEYS: Mutex<HotkeyFilter>`。
+4. 命中组合键时把 `RawInputEvent::Hotkey(hotkey)` 交给 `sink`；tap 的 options 保持 `KCG_EVENT_TAP_OPTION_LISTEN_ONLY`，只观察不吞键。
+5. 权限：键盘事件可能还需要系统设置里的「输入监控」权限（鼠标只需「辅助功能」）。如果 tap 创建成功但收不到键盘事件，先排查这里。
+6. warning：接入前，macOS 上 `HotkeyFilter` / `HotkeyDebouncer` 在 `cgtap.rs` 之外没有任何使用者（`lib.rs` 里 `mod input` 是私有的），首次编译可能出现 `dead_code` 警告，接入后自然消失。
+
+## 49.3 验证（在 Mac 上）
+
+```bash
+cd src-tauri && cargo test && cargo build
+cd .. && npm run tauri build
+```
+
+`cgtap.rs` 的 `#[cfg(test)]` 模块只在 macOS 上编译，之前的所有改动都没有在 macOS 上编译过，第一次务必先跑 `cargo test` 再看运行效果。
+
+手工验证清单：
+
+1. Ctrl+8 开始录制 → 窗口消失 → 操作鼠标 → Ctrl+8 停止 → 窗口恢复、时间线有动作。
+2. Ctrl+9 回放 → 窗口消失 → 结束后恢复；回放中按 Ctrl+9 能停。
+3. 勾上“无限循环”、不点界面上的开始回放，直接按 Ctrl+9 → 应一直循环，再按 Ctrl+9 才停。
+4. 回放中按 ESC 不应有任何反应。
+5. 只按 8（不带 Ctrl）不触发；Ctrl+Shift+8 / Alt+8 不触发；长按不会反复开关。
+6. 录制期间敲键盘不应产生任何录制动作（键盘事件只在组合键命中时才发给上层）。
+7. 未授予「辅助功能」权限时 `CGEventTapCreate` 返回空指针，应报「输入监听不可用」而不是崩溃。
+
+## 49.4 已知的未验证改动
+
+为去掉“回放中按 ESC 停止”，`cgtap.rs` 已被同步修改：删除了 `KEYCODE_ESCAPE` 与 `KEY_DOWN` 常量、`EventKind::EscapePressed` 分支、`classify_event` 的键码参数（签名变为 `classify_event(event_type, button_number)`）以及相关单测。这些改动在 Windows 上被 `#[cfg(target_os = "macos")]` 排除、从未编译过，属于未验证代码，首次在 Mac 上编译时留意报错。
+
+## 49.5 顺带要更新的文档
+
+README 前文与当前实现已有出入，可在 macOS 支持落地时一并修订：
+
+* 第 18 / 41 节仍把 ESC 作为紧急停止，实际现在只有 UI 按钮和 Ctrl+9 能停回放。
+* 第 10 节写的是 `rdev::listen`，实际 macOS 走自建的 `input/cgtap.rs`（CGEventTap），只有 Windows 走 rdev。
+* 第 34 / 35 节的 `platform/` 目录与 `MouseEventSource::start/stop` 接口与现状不一致：现在是 `input/source.rs` 里的常驻 `listen_forever`，由 `input/mod.rs::platform_source` 按平台分流。
