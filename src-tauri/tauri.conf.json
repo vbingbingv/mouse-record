@@ -24,12 +24,25 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "publisher": "小样的好父亲",
+    "copyright": "Copyright © 2026 小样的好父亲",
+    "shortDescription": "鼠标录制与回放工具",
+    "longDescription": "录制鼠标移动与点击并按原时序回放；全局热键 Ctrl+8 开始/结束录制、Ctrl+9 开始/结束回放，录制或回放期间自动隐藏窗口。",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "windows": {
+      "nsis": {
+        "installerIcon": "icons/icon.ico",
+        "headerImage": "installer/header.bmp",
+        "sidebarImage": "installer/sidebar.bmp",
+        "languages": ["SimpChinese", "English"],
+        "installMode": "currentUser"
+      }
+    }
   }
 }

@@ -98,6 +98,7 @@ export default function App() {
             progress={auto.progress}
             onStart={(options) => void auto.startReplay(options)}
             onStop={() => void auto.stopReplay()}
+            onOptionsChange={auto.syncReplayOptions}
           />
 
           <RecordingLibrary
@@ -115,7 +116,9 @@ export default function App() {
       </main>
 
       <footer className="app-footer">
-        回放期间可随时按 ESC 紧急停止 · {auto.recording ? "已就绪可回放" : "请先录制或加载一段录制"}
+        Ctrl+8 开始/结束录制 · Ctrl+9 开始/结束回放 ·
+        录制或回放时窗口会自动隐藏，结束后恢复 ·{" "}
+        {auto.recording ? "已就绪可回放" : "请先录制或加载一段录制"}
       </footer>
     </div>
   );

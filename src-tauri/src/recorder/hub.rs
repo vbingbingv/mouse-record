@@ -9,7 +9,7 @@ use crate::model::recording::{RecordedAction, Recording};
 use crate::model::state::{AtomicEngineState, EngineState};
 
 use super::worker::RecordingWorker;
-use crate::input::source::{EventSink, RawInputEvent, RawMouseEvent};
+use crate::input::source::{EventSink, Hotkey, RawInputEvent, RawMouseEvent};
 
 /// 录制状态统计（低频发送给前端）。
 #[derive(Debug, Clone, serde::Serialize)]
@@ -150,7 +150,12 @@ impl RecorderHub {
     }
 
     /// 构造常驻输入回调（策略层）。
-    pub fn event_sink(self: &Arc<Self>) -> EventSink {
+    ///
+    /// `on_hotkey` 在输入回调线程内被调用，实现必须尽快返回（只做非阻塞投递）。
+    pub fn event_sink(
+        self: &Arc<Self>,
+        on_hotkey: impl Fn(Hotkey) + Send + Sync + 'static,
+    ) -> EventSink {
         let hub = Arc::clone(self);
         Arc::new(move |event: RawInputEvent| match event {
             RawInputEvent::Mouse(event) => {
@@ -165,11 +170,7 @@ impl RecorderHub {
                     }
                 }
             }
-            RawInputEvent::EscapePressed => {
-                if hub.state.load() == EngineState::Replaying {
-                    hub.replay_stop.store(true, Ordering::Relaxed);
-                }
-            }
+            RawInputEvent::Hotkey(hotkey) => on_hotkey(hotkey),
             RawInputEvent::Other => {}
         })
     }
@@ -200,7 +201,7 @@ mod tests {
             .unwrap();
         hub.start_session(|_| {}).unwrap();
 
-        let sink = hub.event_sink();
+        let sink = hub.event_sink(|_| {});
 
         // Idle 之外不记录（Replaying 期间忽略）
         hub.transition_state(EngineState::Recording, EngineState::Idle)
@@ -242,21 +243,21 @@ mod tests {
     }
 
     #[test]
-    fn escape_sets_replay_stop_only_when_replaying() {
+    fn forwards_hotkeys_to_callback() {
         let hub = RecorderHub::new();
+        let seen: Arc<Mutex<Vec<Hotkey>>> = Arc::new(Mutex::new(Vec::new()));
+        let sink_seen = Arc::clone(&seen);
+        let sink = hub.event_sink(move |hotkey| {
+            sink_seen.lock().unwrap().push(hotkey);
+        });
 
-        hub.transition_state(EngineState::Idle, EngineState::Replaying)
-            .unwrap();
-        hub.reset_replay_stop();
-        let sink = hub.event_sink();
-        sink(RawInputEvent::EscapePressed);
-        assert!(hub.replay_stop_flag().load(Ordering::Relaxed));
+        sink(RawInputEvent::Hotkey(Hotkey::ToggleRecording));
+        sink(RawInputEvent::Hotkey(Hotkey::ToggleReplay));
 
-        // Idle 下按 ESC 无副作用
-        hub.set_state(EngineState::Idle);
-        hub.reset_replay_stop();
-        sink(RawInputEvent::EscapePressed);
-        assert!(!hub.replay_stop_flag().load(Ordering::Relaxed));
+        assert_eq!(
+            seen.lock().unwrap().as_slice(),
+            [Hotkey::ToggleRecording, Hotkey::ToggleReplay]
+        );
     }
 
     #[test]

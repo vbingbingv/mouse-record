@@ -26,6 +26,14 @@ export function stopReplay(): Promise<void> {
   return invoke("stop_replay");
 }
 
+/**
+ * 把界面上的回放参数同步给后端：热键回放时窗口已隐藏，
+ * 后端只能用这份值（否则会退化成默认的单次循环）。
+ */
+export function setReplayOptions(options: ReplayOptions): Promise<void> {
+  return invoke("set_replay_options", { options });
+}
+
 export function getEngineState(): Promise<EngineState> {
   return invoke("get_engine_state");
 }

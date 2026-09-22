@@ -1,22 +1,27 @@
 mod commands;
 mod error;
+mod hotkey;
 mod input;
 mod model;
 mod platform;
 mod recorder;
 mod replay;
+mod ui;
 
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use tauri::Emitter;
 
-use model::recording::Recording;
+use hotkey::HotkeyDispatcher;
+use model::recording::{Recording, ReplayOptions};
 use recorder::hub::RecorderHub;
 #[derive(Clone)]
 pub struct AppState {
     pub hub: Arc<RecorderHub>,
     pub current_recording: Arc<Mutex<Option<Recording>>>,
+    /// 当前回放选项：UI 每次改动都会同步过来，热键回放直接沿用。
+    pub last_replay_options: Arc<Mutex<ReplayOptions>>,
 }
 
 const LISTENER_RETRY_INTERVAL: Duration = Duration::from_secs(5);
@@ -27,14 +32,19 @@ pub fn run() {
     let state = AppState {
         hub: hub.clone(),
         current_recording: Arc::new(Mutex::new(None)),
+        last_replay_options: Arc::new(Mutex::new(ReplayOptions::default())),
     };
+    let hotkey_state = state.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .setup(move |app| {
             let app_handle = app.handle().clone();
-            let sink = hub.event_sink();
+
+            // 热键动作走独立线程，避免在输入钩子回调里做阻塞操作
+            let dispatcher = HotkeyDispatcher::new(app_handle.clone(), hotkey_state);
+            let sink = hub.event_sink(move |hotkey| dispatcher.dispatch(hotkey));
             let listener_running = hub.listener_running_flag();
 
             // 常驻全局输入监听线程：失败（如 macOS 未授权辅助功能）时自动重试
@@ -66,6 +76,7 @@ pub fn run() {
             commands::recording::delete_recording,
             commands::replay::start_replay,
             commands::replay::stop_replay,
+            commands::replay::set_replay_options,
             commands::replay::get_engine_state,
             commands::replay::get_listener_status,
         ])

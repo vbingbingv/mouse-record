@@ -32,7 +32,6 @@ const RIGHT_MOUSE_UP: u32 = 4;
 const MOUSE_MOVED: u32 = 5;
 const LEFT_MOUSE_DRAGGED: u32 = 6;
 const RIGHT_MOUSE_DRAGGED: u32 = 7;
-const KEY_DOWN: u32 = 10;
 const SCROLL_WHEEL: u32 = 22;
 const OTHER_MOUSE_DOWN: u32 = 25;
 const OTHER_MOUSE_UP: u32 = 26;
@@ -40,8 +39,6 @@ const OTHER_MOUSE_DRAGGED: u32 = 30;
 const TAP_DISABLED_BY_TIMEOUT: u32 = 0xFFFF_FFFE;
 const TAP_DISABLED_BY_USER_INPUT: u32 = 0xFFFF_FFFF;
 
-/// kVK_Escape
-const KEYCODE_ESCAPE: i64 = 53;
 /// MOUSE_EVENT_BUTTON_NUMBER 字段里表示中键的值
 const BUTTON_NUMBER_MIDDLE: i64 = 2;
 
@@ -63,7 +60,6 @@ fn event_mask() -> u64 {
         OTHER_MOUSE_UP,
         OTHER_MOUSE_DRAGGED,
         SCROLL_WHEEL,
-        KEY_DOWN,
     ]
     .into_iter()
     .fold(0u64, |mask, t| mask | (1 << t))
@@ -76,11 +72,10 @@ enum EventKind {
     ButtonDown(MouseButton),
     ButtonUp(MouseButton),
     Wheel,
-    EscapePressed,
 }
 
-/// 纯映射逻辑：事件类型码 + 按钮号 + 键码 → 事件种类。
-fn classify_event(event_type: u32, button_number: i64, keycode: i64) -> Option<EventKind> {
+/// 纯映射逻辑：事件类型码 + 按钮号 → 事件种类。
+fn classify_event(event_type: u32, button_number: i64) -> Option<EventKind> {
     match event_type {
         // 关键：拖拽事件（按住按钮移动）与普通移动统一映射为 Move
         MOUSE_MOVED | LEFT_MOUSE_DRAGGED | RIGHT_MOUSE_DRAGGED | OTHER_MOUSE_DRAGGED => {
@@ -104,7 +99,6 @@ fn classify_event(event_type: u32, button_number: i64, keycode: i64) -> Option<E
         },
 
         SCROLL_WHEEL => Some(EventKind::Wheel),
-        KEY_DOWN if keycode == KEYCODE_ESCAPE => Some(EventKind::EscapePressed),
 
         _ => None,
     }
@@ -173,9 +167,8 @@ unsafe extern "C" fn raw_callback(
     }
 
     let button_number = event.get_integer_value_field(EventField::MOUSE_EVENT_BUTTON_NUMBER);
-    let keycode = event.get_integer_value_field(EventField::KEYBOARD_EVENT_KEYCODE);
 
-    let Some(kind) = classify_event(event_type, button_number, keycode) else {
+    let Some(kind) = classify_event(event_type, button_number) else {
         return event;
     };
 
@@ -205,7 +198,6 @@ unsafe extern "C" fn raw_callback(
                     .get_integer_value_field(EventField::SCROLL_WHEEL_EVENT_POINT_DELTA_AXIS_2),
             },
         }),
-        EventKind::EscapePressed => RawInputEvent::EscapePressed,
     };
 
     if let Ok(sink_slot) = SINK.lock() {
@@ -281,60 +273,45 @@ mod tests {
     #[test]
     fn dragged_events_map_to_move() {
         // 这正是 rdev 丢事件的根源：三种拖拽必须全部映射为 Move
-        assert_eq!(classify_event(MOUSE_MOVED, 0, 0), Some(EventKind::Move));
+        assert_eq!(classify_event(MOUSE_MOVED, 0), Some(EventKind::Move));
+        assert_eq!(classify_event(LEFT_MOUSE_DRAGGED, 0), Some(EventKind::Move));
         assert_eq!(
-            classify_event(LEFT_MOUSE_DRAGGED, 0, 0),
+            classify_event(RIGHT_MOUSE_DRAGGED, 0),
             Some(EventKind::Move)
         );
-        assert_eq!(
-            classify_event(RIGHT_MOUSE_DRAGGED, 0, 0),
-            Some(EventKind::Move)
-        );
-        assert_eq!(
-            classify_event(OTHER_MOUSE_DRAGGED, 2, 0),
-            Some(EventKind::Move)
-        );
+        assert_eq!(classify_event(OTHER_MOUSE_DRAGGED, 2), Some(EventKind::Move));
     }
 
     #[test]
     fn other_mouse_maps_middle_and_ignores_side_buttons() {
         assert_eq!(
-            classify_event(OTHER_MOUSE_DOWN, 2, 0),
+            classify_event(OTHER_MOUSE_DOWN, 2),
             Some(EventKind::ButtonDown(MouseButton::Middle))
         );
         assert_eq!(
-            classify_event(OTHER_MOUSE_UP, 2, 0),
+            classify_event(OTHER_MOUSE_UP, 2),
             Some(EventKind::ButtonUp(MouseButton::Middle))
         );
         // 侧键（3/4）当前不支持
-        assert_eq!(classify_event(OTHER_MOUSE_DOWN, 3, 0), None);
-        assert_eq!(classify_event(OTHER_MOUSE_UP, 4, 0), None);
-    }
-
-    #[test]
-    fn escape_key_detected() {
-        assert_eq!(
-            classify_event(KEY_DOWN, 0, KEYCODE_ESCAPE),
-            Some(EventKind::EscapePressed)
-        );
-        assert_eq!(classify_event(KEY_DOWN, 0, 40), None);
+        assert_eq!(classify_event(OTHER_MOUSE_DOWN, 3), None);
+        assert_eq!(classify_event(OTHER_MOUSE_UP, 4), None);
     }
 
     #[test]
     fn wheel_and_basic_buttons() {
-        assert_eq!(classify_event(SCROLL_WHEEL, 0, 0), Some(EventKind::Wheel));
+        assert_eq!(classify_event(SCROLL_WHEEL, 0), Some(EventKind::Wheel));
         assert_eq!(
-            classify_event(LEFT_MOUSE_DOWN, 0, 0),
+            classify_event(LEFT_MOUSE_DOWN, 0),
             Some(EventKind::ButtonDown(MouseButton::Left))
         );
         assert_eq!(
-            classify_event(RIGHT_MOUSE_UP, 0, 0),
+            classify_event(RIGHT_MOUSE_UP, 0),
             Some(EventKind::ButtonUp(MouseButton::Right))
         );
     }
 
     #[test]
-    fn mask_includes_drag_other_mouse_and_key_events() {
+    fn mask_includes_drag_and_other_mouse() {
         let mask = event_mask();
         for t in [
             MOUSE_MOVED,
@@ -344,7 +321,6 @@ mod tests {
             OTHER_MOUSE_DOWN,
             OTHER_MOUSE_UP,
             SCROLL_WHEEL,
-            KEY_DOWN,
         ] {
             assert!(mask & (1 << t) != 0, "mask missing event type {t}");
         }

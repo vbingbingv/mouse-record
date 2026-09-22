@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 import type {
   EngineState,
@@ -13,6 +13,8 @@ interface ReplayControlsProps {
   progress: ReplayProgress | null;
   onStart: (options: ReplayOptions) => void;
   onStop: () => void;
+  /** 参数变化时同步给后端，供全局热键回放使用 */
+  onOptionsChange: (options: ReplayOptions) => void;
 }
 
 export function ReplayControls({
@@ -21,6 +23,7 @@ export function ReplayControls({
   progress,
   onStart,
   onStop,
+  onOptionsChange,
 }: ReplayControlsProps) {
   const [loops, setLoops] = useState(1);
   const [infinite, setInfinite] = useState(false);
@@ -34,13 +37,24 @@ export function ReplayControls({
   const canStart = isIdle && hasActions;
   const canStop = engineState === "replaying" || engineState === "stopping";
 
-  const start = () => {
-    onStart({
-      loops: infinite ? 1 : Math.max(1, Math.floor(loops)),
-      loop_interval_ms: Math.max(0, Math.floor(loopIntervalMs)),
+  const options = useMemo<ReplayOptions>(
+    () => ({
+      loops: infinite ? 1 : Math.max(1, Math.floor(loops) || 1),
+      loop_interval_ms: Math.max(0, Math.floor(loopIntervalMs) || 0),
       speed,
       infinite,
-    });
+    }),
+    [infinite, loopIntervalMs, loops, speed],
+  );
+
+  // 参数一变就同步给后端：热键回放时窗口已隐藏，改不了设置，
+  // 后端必须提前知道当前的循环次数 / 无限循环 / 倍速
+  useEffect(() => {
+    onOptionsChange(options);
+  }, [onOptionsChange, options]);
+
+  const start = () => {
+    onStart(options);
   };
 
   return (
@@ -115,7 +129,7 @@ export function ReplayControls({
       )}
 
       {engineState === "replaying" || engineState === "stopping" ? (
-        <div className="hint">回放期间可按 ESC 紧急停止</div>
+        <div className="hint">回放期间可按 Ctrl+9 停止</div>
       ) : null}
     </section>
   );

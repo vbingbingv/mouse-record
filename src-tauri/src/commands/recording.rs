@@ -6,6 +6,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::error::AutomationError;
 use crate::model::recording::Recording;
 use crate::model::state::EngineState;
+use crate::ui;
 use crate::AppState;
 
 const NAME_MAX_LEN: usize = 100;
@@ -69,6 +70,14 @@ fn meta_of(name: &str, recording: &Recording) -> RecordingMeta {
 
 #[tauri::command]
 pub fn start_recording(app: AppHandle, state: State<AppState>) -> Result<(), AutomationError> {
+    start_recording_impl(&app, &state)
+}
+
+/// 开始录制（UI 命令与 Ctrl+8 热键共用）。
+pub(crate) fn start_recording_impl(
+    app: &AppHandle,
+    state: &AppState,
+) -> Result<(), AutomationError> {
     state
         .hub
         .transition_state(EngineState::Idle, EngineState::Recording)
@@ -91,7 +100,7 @@ pub fn start_recording(app: AppHandle, state: State<AppState>) -> Result<(), Aut
         return Err(e);
     }
 
-    let _ = app.emit("engine-state-changed", EngineState::Recording);
+    ui::publish_state(app, EngineState::Recording);
     let _ = app.emit("recording-started", ());
     Ok(())
 }
@@ -100,6 +109,14 @@ pub fn start_recording(app: AppHandle, state: State<AppState>) -> Result<(), Aut
 pub fn stop_recording(
     app: AppHandle,
     state: State<AppState>,
+) -> Result<Recording, AutomationError> {
+    stop_recording_impl(&app, &state)
+}
+
+/// 结束录制（UI 命令与 Ctrl+8 热键共用）。
+pub(crate) fn stop_recording_impl(
+    app: &AppHandle,
+    state: &AppState,
 ) -> Result<Recording, AutomationError> {
     state
         .hub
@@ -113,7 +130,7 @@ pub fn stop_recording(
         .lock()
         .expect("current recording lock poisoned") = Some(recording.clone());
 
-    let _ = app.emit("engine-state-changed", EngineState::Idle);
+    ui::publish_state(app, EngineState::Idle);
     let _ = app.emit("recording-stopped", &recording);
     Ok(recording)
 }

@@ -7,7 +7,13 @@ use rdev::{Event, EventType, Key};
 use crate::error::AutomationError;
 use crate::model::action::{MouseAction, MouseButton};
 
-use super::source::{EventSink, MouseEventSource, RawInputEvent, RawMouseEvent};
+use super::source::{
+    EventSink, Hotkey, HotkeyFilter, MouseEventSource, RawInputEvent, RawMouseEvent,
+};
+
+/// 通用虚拟键码：极少数情况下（注入事件、特殊键盘驱动）钩子给出的
+/// 不是左右专用码而是 VK_CONTROL，这里用于兼容识别 Ctrl。
+const VK_CONTROL: u32 = 0x11;
 
 /// 基于 rdev 的全局输入事件源。
 pub struct RdevEventSource {
@@ -24,6 +30,9 @@ impl MouseEventSource for RdevEventSource {
     fn listen_forever(&self, sink: EventSink) -> Result<(), AutomationError> {
         self.running.store(true, Ordering::Release);
 
+        // 热键状态（Ctrl + 按下沿去抖）：rdev::listen 的回调是 FnMut，就地保存在闭包里
+        let mut hotkeys = HotkeyFilter::default();
+
         let result = rdev::listen(move |event: Event| {
             let raw = match classify(&event.event_type) {
                 Some(Classified::Mouse(action)) => {
@@ -34,7 +43,21 @@ impl MouseEventSource for RdevEventSource {
                         action,
                     })
                 }
-                Some(Classified::EscapePressed) => RawInputEvent::EscapePressed,
+                Some(Classified::HotkeyPressed(hotkey)) => {
+                    // 按住时的 auto-repeat 只发 KeyPress；组合键必须 Ctrl 按住
+                    match hotkeys.on_press(hotkey) {
+                        Some(hotkey) => RawInputEvent::Hotkey(hotkey),
+                        None => return,
+                    }
+                }
+                Some(Classified::HotkeyReleased(hotkey)) => {
+                    hotkeys.on_release(hotkey);
+                    return;
+                }
+                Some(Classified::CtrlChanged(down)) => {
+                    hotkeys.on_ctrl(down);
+                    return;
+                }
                 None => return,
             };
             sink(raw);
@@ -49,7 +72,10 @@ impl MouseEventSource for RdevEventSource {
 /// rdev 事件到业务动作的映射结果（不含时间戳）。
 enum Classified {
     Mouse(MouseAction),
-    EscapePressed,
+    /// Ctrl 按下/抬起（只更新状态，不产生业务事件）。
+    CtrlChanged(bool),
+    HotkeyPressed(Hotkey),
+    HotkeyReleased(Hotkey),
 }
 
 fn classify(event_type: &EventType) -> Option<Classified> {
@@ -71,7 +97,24 @@ fn classify(event_type: &EventType) -> Option<Classified> {
             delta_y: *delta_y,
         })),
 
-        EventType::KeyPress(Key::Escape) => Some(Classified::EscapePressed),
+        // Ctrl+8 / Ctrl+9 是全局功能热键；数字键的释放事件
+        // 只用于维护去抖状态，不产生业务动作
+        EventType::KeyPress(Key::Num8) => Some(Classified::HotkeyPressed(Hotkey::ToggleRecording)),
+        EventType::KeyPress(Key::Num9) => Some(Classified::HotkeyPressed(Hotkey::ToggleReplay)),
+        EventType::KeyRelease(Key::Num8) => {
+            Some(Classified::HotkeyReleased(Hotkey::ToggleRecording))
+        }
+        EventType::KeyRelease(Key::Num9) => {
+            Some(Classified::HotkeyReleased(Hotkey::ToggleReplay))
+        }
+
+        // Ctrl：rdev 只给事件流，组合判断所需的“当前是否按住”自己维护
+        EventType::KeyPress(Key::ControlLeft | Key::ControlRight | Key::Unknown(VK_CONTROL)) => {
+            Some(Classified::CtrlChanged(true))
+        }
+        EventType::KeyRelease(Key::ControlLeft | Key::ControlRight | Key::Unknown(VK_CONTROL)) => {
+            Some(Classified::CtrlChanged(false))
+        }
 
         _ => None,
     }
@@ -118,16 +161,55 @@ mod tests {
     }
 
     #[test]
-    fn classifies_escape_press_only() {
-        assert!(matches!(
-            classify(&EventType::KeyPress(Key::Escape)),
-            Some(Classified::EscapePressed)
-        ));
-        assert!(matches!(
-            classify(&EventType::KeyRelease(Key::Escape)),
-            None
-        ));
+    fn escape_key_is_ignored() {
+        // ESC 不再作为紧急停止入口，与其它普通按键一样被忽略
+        assert!(matches!(classify(&EventType::KeyPress(Key::Escape)), None));
+        assert!(matches!(classify(&EventType::KeyRelease(Key::Escape)), None));
         assert!(matches!(classify(&EventType::KeyPress(Key::KeyA)), None));
+    }
+
+    #[test]
+    fn classifies_hotkey_press_and_release() {
+        assert!(matches!(
+            classify(&EventType::KeyPress(Key::Num8)),
+            Some(Classified::HotkeyPressed(Hotkey::ToggleRecording))
+        ));
+        assert!(matches!(
+            classify(&EventType::KeyPress(Key::Num9)),
+            Some(Classified::HotkeyPressed(Hotkey::ToggleReplay))
+        ));
+        assert!(matches!(
+            classify(&EventType::KeyRelease(Key::Num8)),
+            Some(Classified::HotkeyReleased(Hotkey::ToggleRecording))
+        ));
+        assert!(matches!(
+            classify(&EventType::KeyRelease(Key::Num9)),
+            Some(Classified::HotkeyReleased(Hotkey::ToggleReplay))
+        ));
+        // 相邻数字键不参与
+        assert!(matches!(classify(&EventType::KeyPress(Key::Num7)), None));
+        // 旧的 F8/F9 不再是热键
+        assert!(matches!(classify(&EventType::KeyPress(Key::F8)), None));
+        assert!(matches!(classify(&EventType::KeyPress(Key::F9)), None));
+    }
+
+    #[test]
+    fn classifies_ctrl_press_and_release() {
+        assert!(matches!(
+            classify(&EventType::KeyPress(Key::ControlLeft)),
+            Some(Classified::CtrlChanged(true))
+        ));
+        assert!(matches!(
+            classify(&EventType::KeyRelease(Key::ControlRight)),
+            Some(Classified::CtrlChanged(false))
+        ));
+        assert!(matches!(
+            classify(&EventType::KeyPress(Key::Unknown(VK_CONTROL))),
+            Some(Classified::CtrlChanged(true))
+        ));
+        // Alt 不再参与热键：与普通按键一样被忽略
+        assert!(matches!(classify(&EventType::KeyPress(Key::Alt)), None));
+        assert!(matches!(classify(&EventType::KeyPress(Key::AltGr)), None));
     }
 
     #[test]

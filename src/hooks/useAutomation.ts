@@ -23,6 +23,7 @@ export interface UseAutomation {
   stopRecording: () => Promise<void>;
   startReplay: (options: ReplayOptions) => Promise<void>;
   stopReplay: () => Promise<void>;
+  syncReplayOptions: (options: ReplayOptions) => void;
   adoptRecording: (recording: Recording) => void;
 }
 
@@ -113,6 +114,12 @@ export function useAutomation(): UseAutomation {
       }),
     );
 
+    unlisteners.push(
+      listen<string>("hotkey-error", (e) => {
+        showError(`快捷键操作失败：${e.payload}`);
+      }),
+    );
+
     api
       .getEngineState()
       .then(setEngineState)
@@ -172,6 +179,11 @@ export function useAutomation(): UseAutomation {
     }
   }, [showError]);
 
+  // 只用于让后端记住参数，供热键回放使用；失败不必打扰用户（下次改动还会重推）
+  const syncReplayOptions = useCallback((options: ReplayOptions) => {
+    void api.setReplayOptions(options).catch(() => undefined);
+  }, []);
+
   const adoptRecording = useCallback((next: Recording) => {
     setRecording(next);
     setProgress(null);
@@ -194,6 +206,7 @@ export function useAutomation(): UseAutomation {
     stopRecording,
     startReplay,
     stopReplay,
+    syncReplayOptions,
     adoptRecording,
   };
 }
