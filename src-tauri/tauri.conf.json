@@ -23,7 +23,7 @@
   },
   "bundle": {
     "active": true,
-    "targets": "all",
+    "targets": ["nsis"],
     "publisher": "小样的好父亲",
     "copyright": "Copyright © 2026 小样的好父亲",
     "shortDescription": "鼠标录制与回放工具",

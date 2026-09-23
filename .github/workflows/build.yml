@@ -1,0 +1,62 @@
+name: Build (Windows NSIS)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: build-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build-windows:
+    name: Build NSIS installer (x64)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Setup Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      # Cargo.toml lives in src-tauri, so the cache workspace must point there.
+      - name: Cache Rust build
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - name: Install frontend dependencies
+        run: npm ci
+
+      # tauri build also runs the frontend build (beforeBuildCommand: npm run build).
+      # Only the NSIS installer is produced (bundle.targets is ["nsis"]).
+      - name: Build application and NSIS installer
+        run: npm run tauri build -- --bundles nsis
+
+      # Guards against the rc.exe manifest encoding trap: a non-ASCII app.manifest
+      # makes the embedded manifest invalid UTF-8 and the app fails to start with a
+      # side-by-side configuration error. Fails the run instead of shipping it.
+      - name: Verify embedded application manifest
+        shell: pwsh
+        run: ./.github/scripts/verify-manifest-embed.ps1 -Exe "src-tauri/target/release/mouse-record.exe"
+
+      - name: Upload installer
+        uses: actions/upload-artifact@v4
+        with:
+          name: mouse-record-nsis-x64-${{ github.run_number }}
+          path: src-tauri/target/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 30
