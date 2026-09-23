@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="utf-8"?>
+<assembly xmlns="urn:schemas-microsoft-com:asm.v1" manifestVersion="1.0">
+  <!--
+    Why requireAdministrator:
+    this app injects mouse input with SendInput and installs a WH_MOUSE_LL hook.
+    Windows UIPI blocks input injection from a lower integrity level process into
+    a higher integrity level (elevated) process, and the low level hook does not
+    receive events of elevated windows either. So when the target application runs
+    as administrator, this app has to run elevated too, otherwise recording and
+    replay fail silently.
+    With requireAdministrator Windows shows the UAC prompt on launch, so the app
+    always runs elevated without the user manually choosing "Run as administrator".
+    Side effect: a UAC prompt on every start, even when only non-elevated windows
+    are used.
+
+    IMPORTANT: keep this file pure ASCII.
+    tauri-winres compiles the manifest into the exe with rc.exe, which re-encodes
+    the resource using the system ANSI code page. Any non-ASCII character (even
+    inside a comment) makes the embedded manifest invalid UTF-8, and Windows then
+    fails to start the app with a side-by-side configuration error.
+  -->
+  <trustInfo xmlns="urn:schemas-microsoft-com:asm.v3">
+    <security>
+      <requestedPrivileges>
+        <requestedExecutionLevel level="requireAdministrator" uiAccess="false" />
+      </requestedPrivileges>
+    </security>
+  </trustInfo>
+
+  <!--
+    Keep the Common Controls v6 dependency from Tauri's default manifest,
+    because a custom manifest replaces the default one entirely.
+  -->
+  <dependency>
+    <dependentAssembly>
+      <assemblyIdentity
+        type="win32"
+        name="Microsoft.Windows.Common-Controls"
+        version="6.0.0.0"
+        processorArchitecture="*"
+        publicKeyToken="6595b64144ccf1df"
+        language="*"
+      />
+    </dependentAssembly>
+  </dependency>
+</assembly>
