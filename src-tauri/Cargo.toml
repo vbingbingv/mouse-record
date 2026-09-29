@@ -22,14 +22,18 @@ tauri = { version = "2", features = [] }
 tauri-plugin-opener = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-enigo = "0.2"
 thiserror = "2"
 
 [target.'cfg(target_os = "macos")'.dependencies]
-# 与 rdev 0.5.3 依赖的 core-graphics 版本对齐（cgtap 事件源直接使用）
-core-graphics = { version = "0.19", features = ["highsierra"] }
+# macOS 的事件源（cgtap）与回放投递（cgpost）直接使用 CGEvent；
+# highsierra 起才提供 new_scroll_event（滚轮的像素级回放依赖它）。
+# rdev 只在 Windows 编译，两者不再共享类型，因此不锁版本对齐。
+core-graphics = { version = "0.25", features = ["highsierra"] }
 
 # rdev 0.5.3 在 macOS 上丢弃拖拽移动与中键事件，仅作为 Windows 事件源
 [target.'cfg(target_os = "windows")'.dependencies]
 rdev = "0.5"
+# 回放后端：macOS 改用自建的 CGEvent 投递（input/cgpost.rs），
+# enigo 只服务 Windows，避免它的 macOS 坐标问题进到 mac 构建里
+enigo = "0.2"
 

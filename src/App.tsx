@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { ActionTimeline } from "./components/ActionTimeline";
+import { PermissionBanner } from "./components/PermissionBanner";
 import { RecordControls } from "./components/RecordControls";
 import { RecordingLibrary } from "./components/RecordingLibrary";
 import { ReplayControls } from "./components/ReplayControls";
@@ -73,8 +74,21 @@ export default function App() {
         <StatusBar
           engineState={auto.engineState}
           listenerOk={auto.listenerOk}
+          listenerError={auto.listenerError}
+          permissions={auto.permissions}
         />
       </header>
+
+      {auto.permissions && (
+        <PermissionBanner
+          permissions={auto.permissions}
+          listenerOk={auto.listenerOk}
+          onRequest={() => void auto.requestPermission()}
+          onRefresh={() => void auto.refreshPermissions()}
+          onOpenSettings={(kind) => void auto.openPermissionSettings(kind)}
+          onRestart={() => void auto.restartApp()}
+        />
+      )}
 
       {auto.error && (
         <div className="error-toast" onClick={auto.clearError}>

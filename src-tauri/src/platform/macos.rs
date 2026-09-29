@@ -1,31 +1,22 @@
-/// macOS 滚轮换算。
-///
-/// rdev（录制）：报告的是 CGEvent 的 point delta，单位为像素，
-/// 正 delta_y = 向上、正 delta_x = 向右。
-///
-/// enigo（回放）：`scroll` 以行为单位（ScrollEventUnit::LINE），
-/// 垂直正 = 向下、水平正 = 向右。
-///
-/// core-graphics crate 未暴露 CGEventSourcePixelsPerLine，
-/// 因此用可校准的启发式常量换算像素 → 行。
+//! macOS 滚轮换算。
+//!
+//! 录制（cgtap）：读 CGEvent 的 point delta，单位为像素点，
+//! 正 delta_y = 向上、正 delta_x = 向右。
+//!
+//! 回放（cgpost）：同为像素点，原样投递即与录制端精确对称，
+//! 没有单位换算，只需要把 i64 夹取到 CGEvent 入参的 i32 范围。
+//! （像素 → 行 → enigo 的换算只属于 Windows 的 enigo 后端，见 windows.rs。）
 
-/// 默认每行对应的滚动像素数（macOS 默认约 10px/行，可按手感调整）。
-pub const MACOS_PIXELS_PER_LINE: f64 = 10.0;
-
-pub fn wheel_vertical_to_enigo(delta_y: i64) -> i32 {
-    // rdev 正 = 向上；enigo 垂直正 = 向下 → 取反。
-    // 先按原始方向舍入再取反，保证正负两侧舍入对称。
-    -pixels_to_lines(delta_y)
+pub fn wheel_vertical_to_output(delta_y: i64) -> i32 {
+    clamp_i32(delta_y)
 }
 
-pub fn wheel_horizontal_to_enigo(delta_x: i64) -> i32 {
-    // 两侧均为正 = 向右，仅换单位
-    pixels_to_lines(delta_x)
+pub fn wheel_horizontal_to_output(delta_x: i64) -> i32 {
+    clamp_i32(delta_x)
 }
 
-fn pixels_to_lines(delta_px: i64) -> i32 {
-    let lines = delta_px as f64 / MACOS_PIXELS_PER_LINE;
-    lines.round().clamp(i32::MIN as f64, i32::MAX as f64) as i32
+fn clamp_i32(value: i64) -> i32 {
+    value.clamp(i32::MIN as i64, i32::MAX as i64) as i32
 }
 
 #[cfg(test)]
@@ -33,26 +24,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn vertical_sign_is_inverted() {
-        // rdev 向上（+30px）→ enigo 向上（负值）3 行
-        assert_eq!(wheel_vertical_to_enigo(30), -3);
-        // rdev 向下（-30px）→ enigo 向下（正值）3 行
-        assert_eq!(wheel_vertical_to_enigo(-30), 3);
+    fn signs_are_preserved() {
+        // 录制侧正 = 向上 / 向右，CGEvent 的 point delta 同向
+        assert_eq!(wheel_vertical_to_output(30), 30);
+        assert_eq!(wheel_vertical_to_output(-30), -30);
+        assert_eq!(wheel_horizontal_to_output(25), 25);
+        assert_eq!(wheel_horizontal_to_output(-25), -25);
     }
 
     #[test]
-    fn horizontal_sign_is_preserved() {
-        assert_eq!(wheel_horizontal_to_enigo(25), 3);
-        assert_eq!(wheel_horizontal_to_enigo(-25), -3);
+    fn zero_stays_zero() {
+        assert_eq!(wheel_vertical_to_output(0), 0);
+        assert_eq!(wheel_horizontal_to_output(0), 0);
     }
 
     #[test]
-    fn small_deltas_round_symmetrically() {
-        assert_eq!(wheel_vertical_to_enigo(4), 0);
-        assert_eq!(wheel_vertical_to_enigo(-4), 0);
-        assert_eq!(wheel_vertical_to_enigo(5), -1);
-        assert_eq!(wheel_vertical_to_enigo(-5), 1);
-        assert_eq!(wheel_vertical_to_enigo(15), -2);
-        assert_eq!(wheel_vertical_to_enigo(-15), 2);
+    fn out_of_range_deltas_are_clamped() {
+        assert_eq!(wheel_vertical_to_output(i64::MAX), i32::MAX);
+        assert_eq!(wheel_vertical_to_output(i64::MIN), i32::MIN);
+        assert_eq!(wheel_horizontal_to_output(i64::MAX), i32::MAX);
     }
 }

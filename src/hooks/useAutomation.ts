@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 
 import * as api from "../api/automation";
 import type {
   EngineState,
+  PermissionKind,
+  PermissionStatus,
   Recording,
   RecordingStats,
   ReplayOptions,
@@ -14,6 +17,7 @@ export interface UseAutomation {
   engineState: EngineState;
   listenerOk: boolean;
   listenerError: string | null;
+  permissions: PermissionStatus | null;
   stats: RecordingStats | null;
   recording: Recording | null;
   progress: ReplayProgress | null;
@@ -25,12 +29,17 @@ export interface UseAutomation {
   stopReplay: () => Promise<void>;
   syncReplayOptions: (options: ReplayOptions) => void;
   adoptRecording: (recording: Recording) => void;
+  refreshPermissions: () => Promise<void>;
+  requestPermission: () => Promise<void>;
+  openPermissionSettings: (kind: PermissionKind) => Promise<void>;
+  restartApp: () => Promise<void>;
 }
 
 export function useAutomation(): UseAutomation {
   const [engineState, setEngineState] = useState<EngineState>("idle");
   const [listenerOk, setListenerOk] = useState(true);
   const [listenerError, setListenerError] = useState<string | null>(null);
+  const [permissions, setPermissions] = useState<PermissionStatus | null>(null);
   const [stats, setStats] = useState<RecordingStats | null>(null);
   const [recording, setRecording] = useState<Recording | null>(null);
   const [progress, setProgress] = useState<ReplayProgress | null>(null);
@@ -120,6 +129,13 @@ export function useAutomation(): UseAutomation {
       }),
     );
 
+    // 后端在启动申请授权、以及监听线程每轮重试后都会推送权限状态
+    unlisteners.push(
+      listen<PermissionStatus>("permission-status", (e) => {
+        setPermissions(e.payload);
+      }),
+    );
+
     api
       .getEngineState()
       .then(setEngineState)
@@ -127,6 +143,10 @@ export function useAutomation(): UseAutomation {
     api
       .getListenerStatus()
       .then(setListenerOk)
+      .catch(() => undefined);
+    api
+      .getPermissionStatus()
+      .then(setPermissions)
       .catch(() => undefined);
 
     return () => {
@@ -189,6 +209,66 @@ export function useAutomation(): UseAutomation {
     setProgress(null);
   }, []);
 
+  /** 重新检测：授权后系统设置回到应用时用，不必重启。 */
+  const refreshPermissions = useCallback(async () => {
+    try {
+      setPermissions(await api.getPermissionStatus());
+    } catch (e) {
+      showError(String(e));
+    }
+  }, [showError]);
+
+  const requestPermission = useCallback(async () => {
+    try {
+      setPermissions(await api.requestPermission());
+    } catch (e) {
+      showError(String(e));
+    }
+  }, [showError]);
+
+  const openPermissionSettings = useCallback(
+    async (kind: PermissionKind) => {
+      try {
+        await api.openPermissionSettings(kind);
+      } catch (e) {
+        showError(String(e));
+      }
+    },
+    [showError],
+  );
+
+  const restartApp = useCallback(async () => {
+    try {
+      await api.restartApp();
+    } catch (e) {
+      showError(String(e));
+    }
+  }, [showError]);
+
+  // 从系统设置切回本应用时自动重新检测，省掉一次「重新检测」点击
+  useEffect(() => {
+    let unlisten: UnlistenFn | null = null;
+    let disposed = false;
+
+    void getCurrentWindow()
+      .onFocusChanged(({ payload: focused }) => {
+        if (focused) void refreshPermissions();
+      })
+      .then((fn) => {
+        if (disposed) {
+          fn();
+          return;
+        }
+        unlisten = fn;
+      })
+      .catch(() => undefined);
+
+    return () => {
+      disposed = true;
+      unlisten?.();
+    };
+  }, [refreshPermissions]);
+
   const clearError = useCallback(() => {
     setError(null);
   }, []);
@@ -197,6 +277,7 @@ export function useAutomation(): UseAutomation {
     engineState,
     listenerOk,
     listenerError,
+    permissions,
     stats,
     recording,
     progress,
@@ -208,5 +289,9 @@ export function useAutomation(): UseAutomation {
     stopReplay,
     syncReplayOptions,
     adoptRecording,
+    refreshPermissions,
+    requestPermission,
+    openPermissionSettings,
+    restartApp,
   };
 }

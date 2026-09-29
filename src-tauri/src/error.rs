@@ -31,6 +31,9 @@ pub enum AutomationError {
 
     #[error("input listener unavailable: {0}")]
     ListenerUnavailable(String),
+
+    #[error("unsupported operation: {0}")]
+    Unsupported(String),
 }
 
 impl From<std::io::Error> for AutomationError {

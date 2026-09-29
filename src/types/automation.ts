@@ -27,6 +27,19 @@ export interface ReplayOptions {
 
 export type EngineState = "idle" | "recording" | "replaying" | "stopping";
 
+/** 需要引导授权的权限项（macOS：输入监控 / 辅助功能）。 */
+export type PermissionKind = "listenInput" | "postEvents";
+
+/**
+ * 平台权限状态。
+ * Windows 恒为已授权（提权由启动时的 UAC 完成）；macOS 需要在系统设置里授权。
+ */
+export interface PermissionStatus {
+  platform: "macos" | "windows";
+  listen_input: boolean;
+  post_events: boolean;
+}
+
 export interface RecordingStats {
   duration_ms: number;
   action_count: number;

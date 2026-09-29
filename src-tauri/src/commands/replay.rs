@@ -5,7 +5,7 @@ use tauri::{AppHandle, Emitter, State};
 
 use crate::error::AutomationError;
 use crate::input::controller::MouseController;
-use crate::input::enigo::EnigoMouseController;
+use crate::input::platform_controller;
 use crate::model::recording::{Recording, ReplayOptions};
 use crate::model::state::EngineState;
 use crate::replay::engine::{ReplayEngine, ReplayOutcome};
@@ -65,8 +65,9 @@ pub(crate) fn start_replay_impl(
         .name("replay".into())
         .spawn(move || {
             let replay_result = (|| {
-                let mut controller: Box<dyn MouseController> = match EnigoMouseController::new() {
-                    Ok(c) => Box::new(c),
+                // 控制器必须在回放线程内创建（macOS 的 CGEventSource 不是 Send）
+                let mut controller: Box<dyn MouseController> = match platform_controller() {
+                    Ok(c) => c,
                     Err(e) => {
                         let _ = app_handle.emit("replay-error", e.to_string());
                         return;

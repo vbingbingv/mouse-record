@@ -36,7 +36,7 @@ pub fn run() {
     };
     let hotkey_state = state.clone();
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(state)
         .setup(move |app| {
@@ -54,6 +54,10 @@ pub fn run() {
                     let source = input::platform_source(listener_running);
                     loop {
                         let _ = app_handle.emit("input-listener-status", true);
+                        // 每轮重试都刷新一次权限状态：用户在系统设置里打开开关后，
+                        // 界面无需手动刷新即可看到变化（成功拿到 tap 后不再进入下一轮）
+                        let _ =
+                            app_handle.emit("permission-status", platform::permissions::status());
 
                         if let Err(e) = source.listen_forever(sink.clone()) {
                             let _ = app_handle.emit("input-listener-error", e.to_string());
@@ -64,6 +68,20 @@ pub fn run() {
                     }
                 })
                 .expect("failed to spawn input listener thread");
+
+            // macOS：启动时申请 TCC 授权（对应 Windows 清单里的 UAC 提权）。
+            // 申请接口可能阻塞到用户回应，放独立线程，不拖慢启动。
+            #[cfg(target_os = "macos")]
+            {
+                let app_for_permissions = app.handle().clone();
+                std::thread::Builder::new()
+                    .name("permission-request".into())
+                    .spawn(move || {
+                        let status = platform::permissions::request();
+                        let _ = app_for_permissions.emit("permission-status", status);
+                    })
+                    .expect("failed to spawn permission request thread");
+            }
 
             Ok(())
         })
@@ -79,7 +97,20 @@ pub fn run() {
             commands::replay::set_replay_options,
             commands::replay::get_engine_state,
             commands::replay::get_listener_status,
+            commands::permissions::get_permission_status,
+            commands::permissions::request_permission,
+            commands::permissions::open_permission_settings,
+            commands::permissions::restart_app,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        // macOS：点 Dock 图标（NSApplicationDelegate 的 applicationShouldHandleReopen）时
+        // 必须自己把窗口找回来 —— 录制/回放期间窗口是隐藏的，
+        // 全局热键不可用时这是用户唯一的入口。其它平台不会触发该事件。
+        if let tauri::RunEvent::Reopen { .. } = event {
+            ui::show_main_window(app_handle);
+        }
+    });
 }

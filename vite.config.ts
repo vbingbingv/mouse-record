@@ -15,7 +15,9 @@ export default defineConfig({
   build: {
     target: "es2021",
     outDir: "dist",
-    minify: !process.env.TAURI_DEBUG ? "esbuild" : false,
+    // Vite 8 起不再内置 esbuild（改为可选 peer 依赖），minify 用默认的 oxc 压缩器：
+    // minify: true 会被规范化为 "oxc"，写 "esbuild" 会去加载未安装的 esbuild 而失败
+    minify: !process.env.TAURI_DEBUG,
     sourcemap: !!process.env.TAURI_DEBUG,
   },
 });
